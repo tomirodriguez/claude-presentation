@@ -334,6 +334,6 @@ import { FieldSet, FieldLegend, FieldGroup } from '@/components/ui/field'
 
 ## See Also
 
-- `docs/frontend/react-hook-form-guide.md` - Complete documentation
+- `references/react-hook-form-guide.md` - Complete documentation
 - `/contracts` skill - Zod schema patterns
 - `/mutation-errors` skill - Error handling
