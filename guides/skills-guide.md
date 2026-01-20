@@ -337,6 +337,108 @@ For advanced usage, see `references/advanced-patterns.md`.
 ...
 ```
 
+### Forked Context (Isolated Execution)
+
+Skills can run in a **forked subagent context** with their own isolated conversation history. This is powerful for complex, multi-step operations that shouldn't clutter the main conversation.
+
+#### Basic Fork
+
+Use `context: fork` in the YAML frontmatter:
+
+```yaml
+---
+name: code-analysis
+description: Analyzes code quality and generates detailed reports
+context: fork
+---
+```
+
+When this skill activates, Claude spawns a separate context to execute it. The main conversation stays clean while the skill does its work.
+
+#### Fork with Specific Agent Type
+
+Combine `context: fork` with `agent` to use a specific subagent:
+
+```yaml
+---
+name: deep-exploration
+description: Thoroughly explores and documents codebase architecture
+context: fork
+agent: Explore
+---
+```
+
+Available agent types:
+- `Explore` — Fast codebase exploration and search
+- `Plan` — Architecture and implementation planning
+- `general-purpose` — Generic agent (default)
+- Custom agent names defined in `.claude/agents/`
+
+#### When to Use Forked Context
+
+**Use `context: fork` when:**
+- The skill performs complex multi-step operations
+- You need isolated conversation history
+- You want to avoid polluting the main context
+- The operation has its own workflow that doesn't need user interaction
+
+**Don't use fork when:**
+- The skill is simple or single-operation
+- You need to maintain main conversation context
+- Real-time user interaction is required
+
+### Skills in Custom Subagents
+
+Subagents **do not automatically inherit** skills from the main conversation. To give a custom subagent access to specific skills, list them in the `skills` field:
+
+```markdown
+# .claude/agents/code-reviewer.md
+---
+name: code-reviewer
+description: Reviews code for quality and best practices
+skills: pr-review, security-check, style-guide
+---
+```
+
+The listed skills load into the subagent's context when it starts.
+
+#### Important Limitation
+
+> **Built-in agents (`Explore`, `Plan`, `general-purpose`) do NOT have access to your skills.**
+>
+> Only custom subagents defined in `.claude/agents/` with an explicit `skills` field can use skills.
+
+#### Example: Skill + Subagent Combo
+
+Create a powerful workflow by combining a forked skill with a custom agent that has its own skills:
+
+```yaml
+# .claude/skills/security-audit/SKILL.md
+---
+name: security-audit
+description: Comprehensive security audit of the codebase
+context: fork
+agent: security-specialist
+---
+
+# Security Audit
+
+Run a full security analysis using the security-specialist agent...
+```
+
+```markdown
+# .claude/agents/security-specialist.md
+---
+name: security-specialist
+description: Security-focused code analysis
+skills: vulnerability-scanner, dependency-checker, owasp-guidelines
+---
+
+You are a security specialist. Use your skills to thoroughly analyze code...
+```
+
+This creates a chain: the `security-audit` skill forks into the `security-specialist` agent, which has access to three specialized security skills.
+
 ---
 
 ## Best Practices
@@ -566,6 +668,31 @@ description: What it does and when to use it
 Your instructions here...
 ```
 
+### Advanced SKILL.md (Forked)
+```yaml
+---
+name: complex-skill
+description: Does complex analysis
+context: fork
+agent: my-custom-agent
+allowed-tools: Read, Grep, Glob
+---
+
+# Instructions for isolated execution...
+```
+
+### Custom Agent with Skills
+```markdown
+# .claude/agents/my-agent.md
+---
+name: my-agent
+description: Specialized agent
+skills: skill-a, skill-b, skill-c
+---
+
+Agent instructions...
+```
+
 ### Skill Locations
 ```
 ~/.config/claude/skills/   # Personal (all projects)
@@ -582,6 +709,8 @@ Follow project conventions     → CLAUDE.md
 Run explicit command           → Slash Command
 React to events                → Hook
 Do isolated work               → Subagent
+Complex skill, isolated        → Skill + context: fork
+Give skills to subagent        → Custom agent + skills field
 ```
 
 ---

@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": {
+          "tool": "Edit|Write",
+          "input": {
+            "file_path": ".*\\.(ts|tsx|js|jsx|json|css)$"
+          }
+        },
+        "command": "biome check --write \"$FILE_PATH\""
+      }
+    ]
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPLICACIÓN DEL HOOK
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Este hook se ejecuta DESPUÉS (Post) de que Claude use Edit o Write
+//
+// "matcher": {
+//   "tool": "Edit|Write"         → Se activa con Edit O Write
+//   "input": {
+//     "file_path": ".*\\.(ts|tsx|js|jsx|json|css)$"   → Archivos JS/TS/JSON/CSS
+//   }
+// }
+//
+// "command": "biome check --write \"$FILE_PATH\""
+//   → Ejecuta biome (format + lint) en el archivo modificado
+//   → $FILE_PATH se reemplaza automáticamente
+//   → --write aplica los fixes automaticamente
+//
+// Alternativa solo formato (sin lint):
+//   "command": "biome format --write \"$FILE_PATH\""
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// CÓMO INSTALARLO
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 1. Copiar el JSON (sin estos comentarios) a .claude/settings.json
+// 2. Asegurarse de que biome está instalado:
+//    npm install -D @biomejs/biome
+// 3. Inicializar config (opcional):
+//    npx biome init
+// 4. Listo! Claude formateará y linteará cada archivo que edite
+//
+// ═══════════════════════════════════════════════════════════════════════════

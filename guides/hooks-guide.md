@@ -171,6 +171,23 @@ The easiest way to configure hooks is through Claude Code's built-in UI:
 
 This opens an interactive menu for creating and managing hooks without editing JSON directly.
 
+### Setting Up Bun for Hooks
+
+For type-safe, maintainable hooks, use Bun with the official SDK:
+
+```bash
+# Create hooks directory
+mkdir -p .claude/hooks && cd .claude/hooks
+
+# Initialize Bun project
+bun init -y
+
+# Install the Claude Agent SDK for type definitions
+bun add @anthropic-ai/claude-agent-sdk
+```
+
+This gives you full TypeScript support with autocomplete for all hook inputs and outputs.
+
 ### Hook Types
 
 **Command hooks** - Run shell commands:
@@ -274,18 +291,24 @@ For more control, output JSON to stdout:
 
 ### Example: Blocking with Feedback
 
-```bash
-#!/bin/bash
-# block-sensitive-files.sh
+```typescript
+// .claude/hooks/block-sensitive-files.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-FILE_PATH=$(echo "$CLAUDE_STDIN" | jq -r '.tool_input.file_path')
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-if [[ "$FILE_PATH" == *".env"* ]]; then
-  echo "Cannot modify .env files - they contain secrets" >&2
-  exit 2
-fi
-
-exit 0
+if (filePath.includes(".env")) {
+  const output: HookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Cannot modify .env files - they contain secrets"
+    }
+  }
+  console.log(JSON.stringify(output))
+  process.exit(0)
+}
 ```
 
 ---
@@ -379,7 +402,7 @@ Understanding when to use hooks versus other Claude Code customization options:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/security-check.py"
+            "command": "bun run .claude/hooks/security-check.ts"
           }
         ]
       }
@@ -388,29 +411,35 @@ Understanding when to use hooks versus other Claude Code customization options:
 }
 ```
 
-**security-check.py:**
-```python
-#!/usr/bin/env python3
-import sys
-import json
+**security-check.ts:**
+```typescript
+// .claude/hooks/security-check.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-command = data.get("tool_input", {}).get("command", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const command = (input.tool_input as { command?: string }).command ?? ""
 
-BLOCKED_PATTERNS = [
-    "rm -rf /",
-    "rm -rf ~",
-    "git push --force",
-    "git reset --hard",
-    "> /dev/sda",
+const BLOCKED_PATTERNS = [
+  "rm -rf /",
+  "rm -rf ~",
+  "git push --force",
+  "git reset --hard",
+  "> /dev/sda",
 ]
 
-for pattern in BLOCKED_PATTERNS:
-    if pattern in command:
-        print(f"Blocked dangerous command: {pattern}", file=sys.stderr)
-        sys.exit(2)
-
-sys.exit(0)
+for (const pattern of BLOCKED_PATTERNS) {
+  if (command.includes(pattern)) {
+    const output: HookJSONOutput = {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: `Blocked dangerous command: ${pattern}`
+      }
+    }
+    console.log(JSON.stringify(output))
+    process.exit(0)
+  }
+}
 ```
 
 ### 3. Protect Sensitive Files
@@ -428,7 +457,7 @@ sys.exit(0)
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/protect-files.py"
+            "command": "bun run .claude/hooks/protect-files.ts"
           }
         ]
       }
@@ -437,23 +466,29 @@ sys.exit(0)
 }
 ```
 
-**protect-files.py:**
-```python
-#!/usr/bin/env python3
-import sys
-import json
+**protect-files.ts:**
+```typescript
+// .claude/hooks/protect-files.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-file_path = data.get("tool_input", {}).get("file_path", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-PROTECTED = [".env", "credentials", "secrets", "production/", ".git/"]
+const PROTECTED = [".env", "credentials", "secrets", "production/", ".git/"]
 
-for pattern in PROTECTED:
-    if pattern in file_path:
-        print(f"Cannot modify protected file: {file_path}", file=sys.stderr)
-        sys.exit(2)
-
-sys.exit(0)
+for (const pattern of PROTECTED) {
+  if (filePath.includes(pattern)) {
+    const output: HookJSONOutput = {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: `Cannot modify protected file: ${filePath}`
+      }
+    }
+    console.log(JSON.stringify(output))
+    process.exit(0)
+  }
+}
 ```
 
 ### 4. Auto-Approve Safe Commands
@@ -503,12 +538,26 @@ sys.exit(0)
         "hooks": [
           {
             "type": "command",
-            "command": "echo '## Current Sprint Context' && cat ./SPRINT.md 2>/dev/null || echo 'No sprint file'"
+            "command": "bun run .claude/hooks/inject-sprint-context.ts"
           }
         ]
       }
     ]
   }
+}
+```
+
+**inject-sprint-context.ts:**
+```typescript
+// .claude/hooks/inject-sprint-context.ts
+const sprintFile = Bun.file("./SPRINT.md")
+
+if (await sprintFile.exists()) {
+  const content = await sprintFile.text()
+  console.log("## Current Sprint Context")
+  console.log(content)
+} else {
+  console.log("No sprint file")
 }
 ```
 
@@ -526,13 +575,28 @@ sys.exit(0)
         "hooks": [
           {
             "type": "command",
-            "command": "echo '## Git Status' && git status --short && echo '## Recent Commits' && git log --oneline -5"
+            "command": "bun run .claude/hooks/session-start.ts"
           }
         ]
       }
     ]
   }
 }
+```
+
+**session-start.ts:**
+```typescript
+// .claude/hooks/session-start.ts
+const gitStatus = Bun.spawn(["git", "status", "--short"])
+const statusOutput = await new Response(gitStatus.stdout).text()
+
+const gitLog = Bun.spawn(["git", "log", "--oneline", "-5"])
+const logOutput = await new Response(gitLog.stdout).text()
+
+console.log("## Git Status")
+console.log(statusOutput || "Working tree clean")
+console.log("## Recent Commits")
+console.log(logOutput)
 ```
 
 ### 7. Force Task Completion
@@ -562,9 +626,8 @@ sys.exit(0)
 
 **Problem:** You want desktop notifications when Claude needs input.
 
-**Solution:** Notification hook (or use Stop hook).
+**Solution:** Stop hook that sends notifications.
 
-**macOS:**
 ```json
 {
   "hooks": {
@@ -573,7 +636,7 @@ sys.exit(0)
         "hooks": [
           {
             "type": "command",
-            "command": "osascript -e 'display notification \"Claude needs your attention\" with title \"Claude Code\"'"
+            "command": "bun run .claude/hooks/notify.ts"
           }
         ]
       }
@@ -582,21 +645,19 @@ sys.exit(0)
 }
 ```
 
-**Linux:**
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "notify-send 'Claude Code' 'Awaiting your input'"
-          }
-        ]
-      }
-    ]
-  }
+**notify.ts:**
+```typescript
+// .claude/hooks/notify.ts
+const isMac = process.platform === "darwin"
+
+if (isMac) {
+  Bun.spawn([
+    "osascript", "-e",
+    'display notification "Claude needs your attention" with title "Claude Code"'
+  ])
+} else {
+  // Linux
+  Bun.spawn(["notify-send", "Claude Code", "Awaiting your input"])
 }
 ```
 
@@ -615,7 +676,7 @@ sys.exit(0)
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/audit-log.py"
+            "command": "bun run .claude/hooks/audit-log.ts"
           }
         ]
       }
@@ -624,23 +685,23 @@ sys.exit(0)
 }
 ```
 
-**audit-log.py:**
-```python
-#!/usr/bin/env python3
-import sys
-import json
-from datetime import datetime
+**audit-log.ts:**
+```typescript
+// .claude/hooks/audit-log.ts
+import type { PostToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-log_entry = {
-    "timestamp": datetime.now().isoformat(),
-    "tool": data.get("tool_name"),
-    "input": data.get("tool_input"),
-    "session": data.get("session_id")
+const input = await Bun.stdin.json() as PostToolUseHookInput
+
+const logEntry = {
+  timestamp: new Date().toISOString(),
+  tool: input.tool_name,
+  input: input.tool_input,
+  session: input.session_id
 }
 
-with open("/tmp/claude-audit.log", "a") as f:
-    f.write(json.dumps(log_entry) + "\n")
+const logFile = Bun.file("/tmp/claude-audit.log")
+const existing = await logFile.exists() ? await logFile.text() : ""
+await Bun.write(logFile, existing + JSON.stringify(logEntry) + "\n")
 ```
 
 ### 10. GitButler Integration
@@ -694,7 +755,7 @@ Here's a production-ready `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "echo '## Project Status' && git status --short && echo '## TODO' && head -20 TODO.md 2>/dev/null"
+            "command": "bun run .claude/hooks/session-start.ts"
           }
         ]
       }
@@ -704,7 +765,7 @@ Here's a production-ready `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "cat .claude/context/sprint.md 2>/dev/null || true"
+            "command": "bun run .claude/hooks/inject-context.ts"
           }
         ]
       }
@@ -715,7 +776,7 @@ Here's a production-ready `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/security-check.py",
+            "command": "bun run .claude/hooks/security-check.ts",
             "timeout": 5000
           }
         ]
@@ -725,7 +786,7 @@ Here's a production-ready `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/protect-files.py",
+            "command": "bun run .claude/hooks/protect-files.ts",
             "timeout": 5000
           }
         ]
@@ -737,7 +798,7 @@ Here's a production-ready `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/format-file.sh",
+            "command": "bun run .claude/hooks/format-file.ts",
             "timeout": 30000
           }
         ]
@@ -745,25 +806,44 @@ Here's a production-ready `.claude/settings.json`:
     ],
     "PermissionRequest": [
       {
-        "matcher": "Bash(npm test*)",
+        "matcher": "Bash(pnpm test*)",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"decision\": \"allow\"}'"
+            "command": "bun run .claude/hooks/auto-allow.ts"
           }
         ]
       },
       {
-        "matcher": "Bash(npm run build*)",
+        "matcher": "Bash(pnpm run build*)",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"decision\": \"allow\"}'"
+            "command": "bun run .claude/hooks/auto-allow.ts"
           }
         ]
       }
     ]
   }
+}
+```
+
+**auto-allow.ts:**
+```typescript
+// .claude/hooks/auto-allow.ts
+console.log(JSON.stringify({ decision: "allow" }))
+```
+
+**format-file.ts:**
+```typescript
+// .claude/hooks/format-file.ts
+import type { PostToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
+
+const input = await Bun.stdin.json() as PostToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path
+
+if (filePath) {
+  await Bun.spawn(["prettier", "--write", filePath]).exited
 }
 ```
 
@@ -776,20 +856,11 @@ For `~/.claude/settings.json` (applies to all projects):
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(rm -rf*)",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Blocked rm -rf for safety' >&2 && exit 2"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash(git push --force*)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'Force push blocked - use with care' >&2 && exit 2"
+            "command": "bun run ~/.claude/hooks/global-security.ts"
           }
         ]
       }
@@ -799,11 +870,40 @@ For `~/.claude/settings.json` (applies to all projects):
         "hooks": [
           {
             "type": "command",
-            "command": "osascript -e 'display notification \"Task complete\" with title \"Claude Code\"' 2>/dev/null || notify-send 'Claude Code' 'Task complete' 2>/dev/null || true"
+            "command": "bun run ~/.claude/hooks/notify.ts"
           }
         ]
       }
     ]
+  }
+}
+```
+
+**~/.claude/hooks/global-security.ts:**
+```typescript
+// ~/.claude/hooks/global-security.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
+
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const command = (input.tool_input as { command?: string }).command ?? ""
+
+const BLOCKED = [
+  { pattern: "rm -rf /", reason: "Blocked rm -rf / for safety" },
+  { pattern: "rm -rf ~", reason: "Blocked rm -rf ~ for safety" },
+  { pattern: "git push --force", reason: "Force push blocked - use with care" },
+]
+
+for (const { pattern, reason } of BLOCKED) {
+  if (command.includes(pattern)) {
+    const output: HookJSONOutput = {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: reason
+      }
+    }
+    console.log(JSON.stringify(output))
+    process.exit(0)
   }
 }
 ```
@@ -843,32 +943,42 @@ Default timeout is 60 seconds. Adjust based on your hook's needs:
 ### 5. Handle Errors Gracefully
 Make hooks fail gracefully when dependencies are missing:
 
-```bash
-prettier --write "$FILE" 2>/dev/null || true
+```typescript
+// Safe execution with fallback
+try {
+  await Bun.spawn(["prettier", "--write", filePath]).exited
+} catch {
+  // Prettier not installed, continue silently
+}
 ```
 
-### 6. Use Absolute Paths for Scripts
-Avoid path issues by using absolute paths:
+### 6. Use Absolute Paths for Global Hooks
+Avoid path issues by using absolute paths for user-level hooks:
 
 ```json
-"command": "/Users/you/.claude/hooks/my-script.sh"
+"command": "bun run ~/.claude/hooks/my-hook.ts"
 ```
 
-Or relative to common locations:
+Or relative paths for project-level hooks:
 
 ```json
-"command": "python3 ~/.claude/hooks/check.py"
+"command": "bun run .claude/hooks/my-hook.ts"
 ```
 
-### 7. Quote Variables
-Always quote shell variables to prevent injection:
+### 7. Validate Inputs Safely
+Always validate data from stdin:
 
-```bash
-# Good
-prettier --write "$FILE_PATH"
+```typescript
+import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-# Bad - potential injection
-prettier --write $FILE_PATH
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
+
+// Prevent path traversal
+if (filePath.includes("..")) {
+  console.error("Path traversal blocked")
+  process.exit(2)
+}
 ```
 
 ### 8. Keep Hooks Fast
@@ -880,10 +990,11 @@ Slow hooks degrade the experience. Optimize for speed:
 ### 9. Log for Debugging
 Add logging to troubleshoot issues:
 
-```bash
-#!/bin/bash
-echo "[$(date)] Hook triggered: $@" >> /tmp/claude-hooks.log
-# ... rest of script
+```typescript
+// Add at the start of any hook for debugging
+const logFile = Bun.file("/tmp/claude-hooks.log")
+const existing = await logFile.exists() ? await logFile.text() : ""
+await Bun.write(logFile, existing + `[${new Date().toISOString()}] Hook triggered\n`)
 ```
 
 ### 10. Organize Hook Scripts
@@ -894,10 +1005,12 @@ Keep hooks organized:
 ├── settings.json
 ├── settings.local.json
 └── hooks/
-    ├── security-check.py
-    ├── format-file.sh
-    ├── protect-files.py
-    └── audit-log.py
+    ├── package.json          # Bun project config
+    ├── tsconfig.json         # TypeScript config (optional)
+    ├── security-check.ts
+    ├── protect-files.ts
+    ├── format-file.ts
+    └── audit-log.ts
 ```
 
 ---
@@ -933,29 +1046,37 @@ Claude Code includes a safeguard: direct edits to hook configuration files requi
 
 ### Example: Safe Input Handling
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
-import shlex
+```typescript
+// .claude/hooks/safe-input-example.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-# Safely parse JSON input
-try:
-    data = json.load(sys.stdin)
-except json.JSONDecodeError:
-    print("Invalid JSON input", file=sys.stderr)
-    sys.exit(1)
+// Safely parse JSON input
+let input: PreToolUseHookInput
+try {
+  input = await Bun.stdin.json() as PreToolUseHookInput
+} catch {
+  console.error("Invalid JSON input")
+  process.exit(1)
+}
 
-# Safely extract and validate paths
-file_path = data.get("tool_input", {}).get("file_path", "")
+// Safely extract and validate paths
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-# Prevent path traversal
-if ".." in file_path or file_path.startswith("/"):
-    print("Invalid file path", file=sys.stderr)
-    sys.exit(2)
+// Prevent path traversal
+if (filePath.includes("..") || filePath.startsWith("/etc") || filePath.startsWith("/var")) {
+  const output: HookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Invalid file path - potential security risk"
+    }
+  }
+  console.log(JSON.stringify(output))
+  process.exit(0)
+}
 
-# Use shlex.quote for shell commands
-safe_path = shlex.quote(file_path)
+// For shell commands, use Bun.spawn with array args (no shell injection possible)
+await Bun.spawn(["cat", filePath]).exited
 ```
 
 ---
@@ -967,10 +1088,10 @@ safe_path = shlex.quote(file_path)
 1. **Check matcher syntax**: Matchers are case-sensitive
 2. **Verify file location**: Ensure settings file is in the right place
 3. **Restart Claude Code**: Changes may require restart
-4. **Check permissions**: Hook scripts must be executable
+4. **Test the hook directly**: Run it manually to verify it works
 
 ```bash
-chmod +x .claude/hooks/my-script.sh
+echo '{"tool_name": "Write", "tool_input": {"file_path": "test.js"}}' | bun run .claude/hooks/my-hook.ts
 ```
 
 ### Hook Timing Out
@@ -983,25 +1104,37 @@ chmod +x .claude/hooks/my-script.sh
 
 1. **Check stderr**: Error message must go to stderr, not stdout
 2. **Verify exit code**: Ensure script exits with code 2
+3. **Consider using JSON output**: More reliable than exit codes
 
-```bash
-echo "Error message" >&2  # stderr
-exit 2
+```typescript
+// Using exit code 2
+console.error("Error message")  // stderr
+process.exit(2)
+
+// Better: Using JSON output (recommended)
+const output: HookJSONOutput = {
+  hookSpecificOutput: {
+    hookEventName: "PreToolUse",
+    permissionDecision: "deny",
+    permissionDecisionReason: "Error message"
+  }
+}
+console.log(JSON.stringify(output))
 ```
 
 ### JSON Output Not Recognized
 
-1. **Validate JSON**: Use `jq` to verify format
+1. **Validate JSON**: Test your output with `JSON.parse()`
 2. **Use stdout only**: JSON must go to stdout
 3. **No extra output**: Don't mix JSON with other stdout content
 
-```bash
-# Good
-echo '{"decision": "approve"}'
+```typescript
+// Good - only JSON to stdout
+console.log(JSON.stringify({ decision: "approve" }))
 
-# Bad - mixed output
-echo "Processing..."
-echo '{"decision": "approve"}'
+// Bad - mixed output
+console.log("Processing...")
+console.log(JSON.stringify({ decision: "approve" }))
 ```
 
 ### Debugging Tips
@@ -1012,7 +1145,7 @@ echo '{"decision": "approve"}'
 4. **Test hooks manually**: Run your script with sample input
 
 ```bash
-echo '{"tool_name": "Write", "tool_input": {"file_path": "test.js"}}' | python3 my-hook.py
+echo '{"tool_name": "Write", "tool_input": {"file_path": "test.js"}}' | bun run .claude/hooks/my-hook.ts
 ```
 
 ---

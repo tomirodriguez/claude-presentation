@@ -1,0 +1,17 @@
+{
+  "name": "claude-code-demo",
+  "version": "1.0.0",
+  "description": "Demo files para presentación de Claude Code",
+  "type": "module",
+  "scripts": {
+    "format": "biome format --write 'src/**/*.ts'",
+    "format:check": "biome format 'src/**/*.ts'",
+    "check": "biome check --write 'src/**/*.ts'",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint 'src/'"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "typescript": "^5.3.0"
+  }
+}

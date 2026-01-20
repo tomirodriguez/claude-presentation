@@ -31,21 +31,21 @@ When a hook prints to stdout (exit code 0), that output becomes part of Claude's
 
 ### Pattern: Contextual Review Instructions
 
-```bash
-#!/bin/bash
-# .claude/hooks/review-trigger.sh
+```typescript
+// .claude/hooks/review-trigger.ts
+import type { PostToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-INPUT=$(cat)
-FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+const input = await Bun.stdin.json() as PostToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-if [[ "$FILE" == *"/mutations/"* ]]; then
-  echo "REVIEW REQUIRED: You modified a mutation file."
-  echo "Before continuing, verify error handling according to Docs/error-handling.md"
-  echo "Check: 1) Try/catch blocks 2) Error logging 3) User-facing messages"
-elif [[ "$FILE" == *"/auth/"* ]]; then
-  echo "REVIEW REQUIRED: You modified auth code."
-  echo "Verify against Docs/authorization.md before proceeding."
-fi
+if (filePath.includes("/mutations/")) {
+  console.log("REVIEW REQUIRED: You modified a mutation file.")
+  console.log("Before continuing, verify error handling according to Docs/error-handling.md")
+  console.log("Check: 1) Try/catch blocks 2) Error logging 3) User-facing messages")
+} else if (filePath.includes("/auth/")) {
+  console.log("REVIEW REQUIRED: You modified auth code.")
+  console.log("Verify against Docs/authorization.md before proceeding.")
+}
 ```
 
 ### Configuration
@@ -58,7 +58,7 @@ fi
         "matcher": "Edit|Write",
         "hooks": [{
           "type": "command",
-          "command": ".claude/hooks/review-trigger.sh"
+          "command": "bun run .claude/hooks/review-trigger.ts"
         }]
       }
     ]
@@ -76,9 +76,15 @@ fi
 ### Production Example (PubNub)
 
 PubNub uses this pattern for multi-agent workflows:
-```bash
-# Hook reads queue status and prints next action
-echo "Use the architect-review subagent on 'use-case-presets'."
+```typescript
+// Hook reads queue status and prints next action
+const queueFile = Bun.file(".claude/queue.json")
+if (await queueFile.exists()) {
+  const queue = await queueFile.json()
+  if (queue.nextTask) {
+    console.log(`Use the architect-review subagent on '${queue.nextTask}'.`)
+  }
+}
 ```
 
 Claude sees this instruction and acts on it.
@@ -106,86 +112,90 @@ PreToolUse and PermissionRequest hooks can modify tool parameters before executi
 
 #### 1. Auto-Add Safety Flags
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
+```typescript
+// .claude/hooks/auto-safety-flags.ts
+import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-command = data.get("tool_input", {}).get("command", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const command = (input.tool_input as { command?: string }).command ?? ""
 
-# Add interactive flag to rm commands
-if command.startswith("rm ") and "-i" not in command:
-    safe_command = command.replace("rm ", "rm -i ", 1)
-    print(json.dumps({
-        "decision": "approve",
-        "updatedInput": {"command": safe_command}
-    }))
-else:
-    print(json.dumps({"decision": "approve"}))
+// Add interactive flag to rm commands
+if (command.startsWith("rm ") && !command.includes("-i")) {
+  const safeCommand = command.replace("rm ", "rm -i ")
+  console.log(JSON.stringify({
+    decision: "approve",
+    updatedInput: { command: safeCommand }
+  }))
+} else {
+  console.log(JSON.stringify({ decision: "approve" }))
+}
 ```
 
 #### 2. Redirect File Paths to Safe Directories
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
+```typescript
+// .claude/hooks/redirect-paths.ts
+import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-file_path = data.get("tool_input", {}).get("file_path", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-# Redirect production paths to staging
-if "/production/" in file_path:
-    safe_path = file_path.replace("/production/", "/staging/")
-    print(json.dumps({
-        "decision": "approve",
-        "updatedInput": {"file_path": safe_path},
-        "reason": f"Redirected to staging: {safe_path}"
-    }))
-    sys.exit(0)
-
-print(json.dumps({"decision": "approve"}))
+// Redirect production paths to staging
+if (filePath.includes("/production/")) {
+  const safePath = filePath.replace("/production/", "/staging/")
+  console.log(JSON.stringify({
+    decision: "approve",
+    updatedInput: { file_path: safePath },
+    reason: `Redirected to staging: ${safePath}`
+  }))
+} else {
+  console.log(JSON.stringify({ decision: "approve" }))
+}
 ```
 
 #### 3. Inject Environment Variables
 
-```bash
-#!/bin/bash
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command')
+```typescript
+// .claude/hooks/inject-env.ts
+import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-# Inject required env vars
-MODIFIED="export NODE_ENV=development && $COMMAND"
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const command = (input.tool_input as { command?: string }).command ?? ""
 
-echo "{\"decision\": \"approve\", \"updatedInput\": {\"command\": \"$MODIFIED\"}}"
+// Inject required env vars
+const modified = `export NODE_ENV=development && ${command}`
+
+console.log(JSON.stringify({
+  decision: "approve",
+  updatedInput: { command: modified }
+}))
 ```
 
 #### 4. Auto-Inject Headers/Licenses
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
+```typescript
+// .claude/hooks/auto-license.ts
+import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-content = data.get("tool_input", {}).get("content", "")
-file_path = data.get("tool_input", {}).get("file_path", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const content = (input.tool_input as { content?: string }).content ?? ""
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-LICENSE_HEADER = """/*
+const LICENSE_HEADER = `/*
  * Copyright 2024 MyCompany
  * SPDX-License-Identifier: MIT
  */
 
-"""
+`
 
-if file_path.endswith((".ts", ".js")) and "Copyright" not in content:
-    print(json.dumps({
-        "decision": "approve",
-        "updatedInput": {"content": LICENSE_HEADER + content}
-    }))
-else:
-    print(json.dumps({"decision": "approve"}))
+if ((filePath.endsWith(".ts") || filePath.endsWith(".js")) && !content.includes("Copyright")) {
+  console.log(JSON.stringify({
+    decision: "approve",
+    updatedInput: { content: LICENSE_HEADER + content }
+  }))
+} else {
+  console.log(JSON.stringify({ decision: "approve" }))
+}
 ```
 
 ---
@@ -247,9 +257,12 @@ When a Stop hook returns `"decision": "block"`, Claude receives the `reason` and
 
 Force Claude to ask for next task instead of stopping:
 
-```bash
-#!/bin/bash
-echo '{"decision": "block", "reason": "Before stopping, ask the user what they want to work on next using AskUserQuestion."}'
+```typescript
+// .claude/hooks/whats-next.ts
+console.log(JSON.stringify({
+  decision: "block",
+  reason: "Before stopping, ask the user what they want to work on next using AskUserQuestion."
+}))
 ```
 
 ---
@@ -269,13 +282,15 @@ Hooks have access to special environment variables not fully documented:
 
 ### Usage Example
 
-```bash
-#!/bin/bash
-# Access without parsing JSON
-if [[ "$CLAUDE_TOOL_INPUT_FILE_PATH" == *".env"* ]]; then
-  echo "Cannot modify .env files" >&2
-  exit 2
-fi
+```typescript
+// .claude/hooks/check-env-vars.ts
+// Access environment variables directly (alternative to stdin parsing)
+const filePath = process.env.CLAUDE_TOOL_INPUT_FILE_PATH ?? ""
+
+if (filePath.includes(".env")) {
+  console.error("Cannot modify .env files")
+  process.exit(2)
+}
 ```
 
 ---
@@ -299,65 +314,81 @@ type BaseHookInput = {
 
 #### 1. Context-Aware Decisions
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
+```typescript
+// .claude/hooks/context-aware.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-transcript_path = data.get("transcript_path", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const transcriptPath = input.transcript_path
 
-# Read conversation history
-with open(transcript_path, 'r') as f:
-    transcript = f.read()
+// Read conversation history
+const transcriptFile = Bun.file(transcriptPath)
+const transcript = await transcriptFile.text()
 
-# Check if user mentioned "production" earlier
-if "production" in transcript.lower() and "deploy" in transcript.lower():
-    print(json.dumps({
-        "decision": "block",
-        "reason": "Detected production deployment context. Please confirm before proceeding."
-    }))
-    sys.exit(0)
+// Check if user mentioned "production" earlier
+if (transcript.toLowerCase().includes("production") && transcript.toLowerCase().includes("deploy")) {
+  const output: HookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Detected production deployment context. Please confirm before proceeding."
+    }
+  }
+  console.log(JSON.stringify(output))
+  process.exit(0)
+}
 
-print(json.dumps({"decision": "approve"}))
+console.log(JSON.stringify({ decision: "approve" }))
 ```
 
 #### 2. Semantic Backups Before Compaction
 
-```bash
-#!/bin/bash
-# PreCompact hook - save important context
-INPUT=$(cat)
-TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path')
+```typescript
+// .claude/hooks/backup-decisions.ts
+import type { PreCompactHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-# Extract key decisions before they're compacted
-grep -E "(decided|agreed|confirmed|requirement)" "$TRANSCRIPT" > .claude/backups/decisions_$(date +%s).txt
+const input = await Bun.stdin.json() as PreCompactHookInput
+const transcriptPath = input.transcript_path
+
+const transcript = await Bun.file(transcriptPath).text()
+
+// Extract key decisions before they're compacted
+const decisionPatterns = /(decided|agreed|confirmed|requirement).*/gi
+const decisions = transcript.match(decisionPatterns)
+
+if (decisions?.length) {
+  const backupPath = `.claude/backups/decisions_${Date.now()}.txt`
+  await Bun.write(backupPath, decisions.join("\n"))
+}
 ```
 
 #### 3. Conversation-Based Rate Limiting
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
+```typescript
+// .claude/hooks/rate-limit.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
-transcript_path = data.get("transcript_path", "")
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const transcriptPath = input.transcript_path
 
-with open(transcript_path, 'r') as f:
-    content = f.read()
+const transcript = await Bun.file(transcriptPath).text()
 
-# Count tool uses in this session
-edit_count = content.count('"tool_name": "Edit"')
+// Count tool uses in this session
+const editCount = (transcript.match(/"tool_name": "Edit"/g) ?? []).length
 
-if edit_count > 50:
-    print(json.dumps({
-        "decision": "block",
-        "reason": f"Too many edits ({edit_count}). Review changes before continuing."
-    }))
-    sys.exit(0)
+if (editCount > 50) {
+  const output: HookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `Too many edits (${editCount}). Review changes before continuing.`
+    }
+  }
+  console.log(JSON.stringify(output))
+  process.exit(0)
+}
 
-print(json.dumps({"decision": "approve"}))
+console.log(JSON.stringify({ decision: "approve" }))
 ```
 
 ---
@@ -389,15 +420,19 @@ print(json.dumps({"decision": "approve"}))
 
 ### State Sharing via Files
 
-```bash
-# pre-edit.sh
-echo $(date +%s) > /tmp/claude-edit-start
+```typescript
+// .claude/hooks/pre-edit.ts
+await Bun.write("/tmp/claude-edit-start", Date.now().toString())
 
-# post-edit.sh
-START=$(cat /tmp/claude-edit-start)
-NOW=$(date +%s)
-DURATION=$((NOW - START))
-echo "Edit took ${DURATION}s" >> /tmp/claude-metrics.log
+// .claude/hooks/post-edit.ts
+const startFile = Bun.file("/tmp/claude-edit-start")
+if (await startFile.exists()) {
+  const start = parseInt(await startFile.text())
+  const duration = Date.now() - start
+  const logFile = Bun.file("/tmp/claude-metrics.log")
+  const existing = await logFile.exists() ? await logFile.text() : ""
+  await Bun.write(logFile, existing + `Edit took ${duration}ms\n`)
+}
 ```
 
 ### Multi-Phase Validation Pipeline
@@ -464,39 +499,44 @@ Hooks can target MCP server tools using special matchers:
 
 ### Pattern: API Rate Limiting
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
-import time
+```typescript
+// .claude/hooks/rate-limit-api.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-RATE_FILE = "/tmp/mcp-api-calls"
-LIMIT = 10  # calls per minute
+const RATE_FILE = "/tmp/mcp-api-calls"
+const LIMIT = 10 // calls per minute
 
-# Read recent calls
-try:
-    with open(RATE_FILE, 'r') as f:
-        calls = [float(t) for t in f.readlines()]
-except FileNotFoundError:
-    calls = []
+const input = await Bun.stdin.json() as PreToolUseHookInput
 
-# Filter to last minute
-now = time.time()
-recent = [t for t in calls if now - t < 60]
+// Read recent calls
+const rateFile = Bun.file(RATE_FILE)
+let calls: number[] = []
+if (await rateFile.exists()) {
+  const content = await rateFile.text()
+  calls = content.split("\n").filter(Boolean).map(Number)
+}
 
-if len(recent) >= LIMIT:
-    print(json.dumps({
-        "decision": "block",
-        "reason": f"Rate limit exceeded ({LIMIT}/min). Wait before making more API calls."
-    }))
-    sys.exit(0)
+// Filter to last minute
+const now = Date.now()
+const recent = calls.filter(t => now - t < 60000)
 
-# Log this call
-recent.append(now)
-with open(RATE_FILE, 'w') as f:
-    f.write('\n'.join(str(t) for t in recent))
+if (recent.length >= LIMIT) {
+  const output: HookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `Rate limit exceeded (${LIMIT}/min). Wait before making more API calls.`
+    }
+  }
+  console.log(JSON.stringify(output))
+  process.exit(0)
+}
 
-print(json.dumps({"decision": "approve"}))
+// Log this call
+recent.push(now)
+await Bun.write(rateFile, recent.join("\n"))
+
+console.log(JSON.stringify({ decision: "approve" }))
 ```
 
 ---
@@ -505,67 +545,88 @@ print(json.dumps({"decision": "approve"}))
 
 ### 1. Audio Notifications
 
-```python
-#!/usr/bin/env python3
-# Stop hook - announce completion
-import pyttsx3
-engine = pyttsx3.init()
-engine.say("Claude has finished the task")
-engine.runAndWait()
+```typescript
+// .claude/hooks/audio-notify.ts
+// Stop hook - announce completion using macOS say command
+const isMac = process.platform === "darwin"
+
+if (isMac) {
+  Bun.spawn(["say", "Claude has finished the task"])
+} else {
+  // Linux with espeak
+  Bun.spawn(["espeak", "Claude has finished the task"])
+}
 ```
 
 ### 2. Slack Integration
 
-```bash
-#!/bin/bash
-# PostToolUse hook
-curl -X POST -H 'Content-type: application/json' \
-  --data '{"text":"Claude completed: '"$CLAUDE_TOOL_INPUT_FILE_PATH"'"}' \
-  $SLACK_WEBHOOK_URL
+```typescript
+// .claude/hooks/slack-notify.ts
+import type { PostToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
+
+const input = await Bun.stdin.json() as PostToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? "unknown"
+
+const webhookUrl = process.env.SLACK_WEBHOOK_URL
+if (webhookUrl) {
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: `Claude completed: ${filePath}` })
+  })
+}
 ```
 
 ### 3. Smart Light Integration
 
-```bash
-#!/bin/bash
-# Change light color based on hook type
-if [ "$1" == "error" ]; then
-  curl "http://hue-bridge/api/lights/1/state" -d '{"hue": 0}'  # Red
-else
-  curl "http://hue-bridge/api/lights/1/state" -d '{"hue": 25500}'  # Green
-fi
+```typescript
+// .claude/hooks/hue-lights.ts
+const isError = process.argv[2] === "error"
+
+const hue = isError ? 0 : 25500 // Red for error, green for success
+
+await fetch("http://hue-bridge/api/lights/1/state", {
+  method: "PUT",
+  body: JSON.stringify({ hue })
+})
 ```
 
 ### 4. Auto-Backup Before Edits
 
-```bash
-#!/bin/bash
-# PreToolUse hook for Edit
-FILE="$CLAUDE_TOOL_INPUT_FILE_PATH"
-if [ -f "$FILE" ]; then
-  cp "$FILE" "$FILE.claude-backup-$(date +%s)"
-fi
+```typescript
+// .claude/hooks/auto-backup.ts
+import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
+
+const input = await Bun.stdin.json() as PreToolUseHookInput
+const filePath = (input.tool_input as { file_path?: string }).file_path
+
+if (filePath) {
+  const file = Bun.file(filePath)
+  if (await file.exists()) {
+    const backupPath = `${filePath}.claude-backup-${Date.now()}`
+    await Bun.write(backupPath, file)
+  }
+}
 ```
 
 ### 5. Usage Analytics
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
-import csv
-from datetime import datetime
+```typescript
+// .claude/hooks/analytics.ts
+import type { PostToolUseHookInput } from "@anthropic-ai/claude-agent-sdk"
 
-data = json.load(sys.stdin)
+const input = await Bun.stdin.json() as PostToolUseHookInput
 
-with open('/tmp/claude-usage.csv', 'a', newline='') as f:
-    writer = csv.writer(f)
-    writer.writerow([
-        datetime.now().isoformat(),
-        data.get('session_id'),
-        data.get('tool_name'),
-        data.get('tool_input', {}).get('file_path', '')
-    ])
+const row = [
+  new Date().toISOString(),
+  input.session_id,
+  input.tool_name,
+  (input.tool_input as { file_path?: string }).file_path ?? ""
+].join(",")
+
+const csvFile = Bun.file("/tmp/claude-usage.csv")
+const existing = await csvFile.exists() ? await csvFile.text() : ""
+await Bun.write(csvFile, existing + row + "\n")
 ```
 
 ---
@@ -583,7 +644,7 @@ An extreme pattern for long-running autonomous sessions:
       {
         "hooks": [{
           "type": "command",
-          "command": "./continue-loop.sh"
+          "command": "bun run .claude/hooks/continue-loop.ts"
         }]
       }
     ]
@@ -591,19 +652,26 @@ An extreme pattern for long-running autonomous sessions:
 }
 ```
 
-```bash
-#!/bin/bash
-# continue-loop.sh
-ITERATIONS=$(cat /tmp/claude-iterations 2>/dev/null || echo 0)
-MAX_ITERATIONS=10
+```typescript
+// .claude/hooks/continue-loop.ts
+const MAX_ITERATIONS = 10
+const iterFile = Bun.file("/tmp/claude-iterations")
 
-if [ "$ITERATIONS" -lt "$MAX_ITERATIONS" ]; then
-  echo $((ITERATIONS + 1)) > /tmp/claude-iterations
-  echo '{"decision": "block", "reason": "Continue with the next task from the queue."}'
-else
-  echo '{"decision": "approve"}'
-  rm /tmp/claude-iterations
-fi
+let iterations = 0
+if (await iterFile.exists()) {
+  iterations = parseInt(await iterFile.text())
+}
+
+if (iterations < MAX_ITERATIONS) {
+  await Bun.write(iterFile, (iterations + 1).toString())
+  console.log(JSON.stringify({
+    decision: "block",
+    reason: "Continue with the next task from the queue."
+  }))
+} else {
+  await iterFile.delete()
+  console.log(JSON.stringify({ decision: "approve" }))
+}
 ```
 
 **Safety Critical**: Always set iteration limits to prevent runaway loops.
@@ -612,11 +680,20 @@ fi
 
 Include escape hatches in your autonomous loops:
 
-```bash
-if grep -q "**HARD STOP**" "$TRANSCRIPT_PATH"; then
-  echo '{"decision": "approve", "stopReason": "Hard stop requested"}'
-  exit 0
-fi
+```typescript
+// .claude/hooks/check-hard-stop.ts
+import type { StopHookInput } from "@anthropic-ai/claude-agent-sdk"
+
+const input = await Bun.stdin.json() as StopHookInput
+const transcript = await Bun.file(input.transcript_path).text()
+
+if (transcript.includes("**HARD STOP**")) {
+  console.log(JSON.stringify({
+    decision: "approve",
+    stopReason: "Hard stop requested"
+  }))
+  process.exit(0)
+}
 ```
 
 ---
@@ -640,27 +717,36 @@ Never copy hooks from untrusted sources without review. Malicious hooks can:
 
 ### Input Validation
 
-```python
-#!/usr/bin/env python3
-import sys
-import json
-import shlex
+```typescript
+// .claude/hooks/validate-input.ts
+import type { PreToolUseHookInput, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk"
 
-try:
-    data = json.load(sys.stdin)
-except json.JSONDecodeError:
-    print("Invalid JSON", file=sys.stderr)
-    sys.exit(1)
+let input: PreToolUseHookInput
+try {
+  input = await Bun.stdin.json() as PreToolUseHookInput
+} catch {
+  console.error("Invalid JSON")
+  process.exit(1)
+}
 
-file_path = data.get("tool_input", {}).get("file_path", "")
+const filePath = (input.tool_input as { file_path?: string }).file_path ?? ""
 
-# Prevent path traversal
-if ".." in file_path:
-    print("Path traversal blocked", file=sys.stderr)
-    sys.exit(2)
+// Prevent path traversal
+if (filePath.includes("..")) {
+  const output: HookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "Path traversal blocked"
+    }
+  }
+  console.log(JSON.stringify(output))
+  process.exit(0)
+}
 
-# Safe shell quoting
-safe_path = shlex.quote(file_path)
+// With Bun.spawn, use array args to avoid shell injection
+// This is safer than shell quoting
+await Bun.spawn(["cat", filePath]).exited
 ```
 
 ---
@@ -699,16 +785,16 @@ safe_path = shlex.quote(file_path)
 
 ---
 
-## Type-Safe Hooks with Bun & TypeScript
+## Bun & TypeScript Reference
 
-Writing hooks in bash works but lacks structure. For complex hooks, use Bun + TypeScript with the official SDK for type safety and better DX.
+All examples in this guide use Bun with TypeScript. Here's a quick reference for setting up and structuring your hooks.
 
-### Setup
+### Project Setup
 
 ```bash
-mkdir .claude/hooks && cd .claude/hooks
-bun init
-bun i @anthropic-ai/claude-agent-sdk
+mkdir -p .claude/hooks && cd .claude/hooks
+bun init -y
+bun add @anthropic-ai/claude-agent-sdk
 ```
 
 ### Basic Type-Safe Hook
