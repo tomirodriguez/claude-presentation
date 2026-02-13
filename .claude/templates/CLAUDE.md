@@ -1,191 +1,308 @@
-# Claude Development Guidelines
+# CLAUDE.md
 
-**Project**: {PROJECT_NAME} - {PROJECT_DESCRIPTION}
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
----
+## Project Overview
 
-## Quick Reference
 
-**Stack**: {STACK_DESCRIPTION}
-**Deploy**: {DEPLOYMENT_TARGET}
-**Architecture**: Clean Architecture + DDD
-**UI**: {UI_FRAMEWORK}
+Core differentiator: Program creation as fast as Excel, with centralized athlete management.
 
-**Central Documentation**: See `{CLAUDE_DOCS_PATH}` for detailed patterns and guides.
+## Tech Stack
 
----
+| Layer | Technology |
+|-------|------------|
+| Monorepo | pnpm workspaces + Turbo |
+| Linting | Biome |
+| Frontend | React 19 + Vite + TanStack Router/Query |
+| API | Hono + oRPC |
+| Database | Neon PostgreSQL + Drizzle ORM |
+| Auth | Better-Auth |
+| Validation | Zod |
+| Error Handling | neverthrow (ResultAsync) |
 
-## Communication & Language
+## Architecture
 
-**Communication with developers**: {PREFERRED_LANGUAGE}
-**Code and documentation**: Always in English (code comments, commit messages, function names)
-**User-facing text**: {USER_LANGUAGE} (validation messages, UI labels)
+This project follows **Clean Architecture** with inside-out development. See `/architecture` skill for the mandatory development flow.
 
----
-
-## Essential Rules (ALWAYS Follow)
-
-### 1. No Type Casting (`as`)
-
-**NEVER** use `as` to cast types. Fix the actual type issue instead.
-
-```typescript
-// BAD - Hiding type problems
-const user = data as User
-
-// GOOD - Proper typing
-const userResult = userSchema.safeParse(data)
-if (!userResult.success) throw new Error('Invalid user')
-const user = userResult.data
-```
-
-### 2. No Non-Null Assertions (`!`)
-
-**NEVER** use `!` (non-null assertion). Use nullish coalescing or guards.
-
-```typescript
-// BAD - Dangerous assumption
-const name = user!.name
-
-// GOOD - Safe alternatives
-const name = user?.name ?? 'Default'
-```
-
-### 3. No Barrel Files
-
-**NEVER** create `index.ts` files that just re-export. Use direct imports.
-
-```typescript
-// BAD
-import { usersTable } from '@/db'
-
-// GOOD - Direct imports
-import { usersTable } from '@/db/schema/users'
-```
-
-### 4. Validate Before Commit
-
-**ALWAYS** run validations before committing:
-```bash
-pnpm typecheck && pnpm lint
-```
-
-### 5. OrganizationContext for Multi-Tenancy
-
-If using multi-tenancy, **ALL** tenant-scoped operations MUST receive `OrganizationContext`.
-
-```typescript
-// Repository method with context
-findById(id: string, context: OrganizationContext) {
-  return this.db.select()
-    .from(table)
-    .where(
-      and(
-        eq(table.id, id),
-        eq(table.organizationId, context.organizationId) // CRITICAL
-      )
-    )
-}
-```
-
----
-
-## Project Structure
+### Package Structure
 
 ```
-{PROJECT_STRUCTURE}
+apps/
+  coach-web/          # React + Vite (Desktop SPA, keyboard-first)
+  athlete-pwa/        # React + Vite + PWA (Mobile, touch-friendly)
+  server/             # Hono entry point (Cloudflare Workers)
+  marketing/          # Next.js (Landing page)
+
+packages/
+  core/               # Domain entities + ports (no dependencies on other packages)
+  contracts/          # Zod schemas (shared API boundary)
+  database/           # Drizzle schemas + migrations
+  auth/               # Better-Auth configuration
+  backend/            # Procedures + use cases + repositories
+  typescript-config/  # Shared TSConfig
+```
+
+### Layer Dependencies
+
+```
+core (pure domain) → database → auth → backend → contracts (Zod schemas) → apps
 ```
 
 ### Data Flow
 
 ```
-{DATA_FLOW_DIAGRAM}
+Frontend → TanStack Query → oRPC Client → HTTP → Hono → oRPC Procedure
+  → Use Case (authorization first) → Repository → Drizzle → PostgreSQL
 ```
 
----
-
-## Available Skills
-
-The following skills are available from the central documentation:
-
-| Skill | Description |
-|-------|-------------|
-| `/repository` | Repository pattern with ResultAsync |
-| `/use-case` | Use case pattern with authorization |
-| `/contracts` | Zod schema patterns (3-layer) |
-| `/procedure` | Thin API handler pattern |
-| `/port` | Repository interface definitions |
-| `/domain-entity` | Domain entities with validation |
-| `/authorization` | RBAC permission checks |
-| `/mutation-errors` | TanStack Query error handling |
-| `/data-table` | DataTable compound component |
-| `/date-management` | Date handling across the stack |
-| `/form` | React Hook Form + shadcn/ui patterns |
-| `/test-runner` | Validation workflow |
-| `/skill-creator` | How to create new skills |
-
----
-
-## Common Commands
-
-### Development
+## Development Commands
 
 ```bash
-pnpm dev              # Development server
-pnpm typecheck        # TypeScript checking
-pnpm lint             # Linting
-pnpm lint:fix         # Lint with auto-fix
+# Database
+pnpm db:start       # Start PostgreSQL container
+pnpm db:push        # Push schema changes (dev)
+pnpm db:seed        # Seed development data
+pnpm db:studio      # Open Drizzle Studio
+pnpm db:reset       # Reset database completely
+
+# Development
+pnpm dev            # Start all apps
+pnpm dev:coach      # Start coach-web only
+pnpm dev:athlete    # Start athlete-pwa only
+pnpm dev:server     # Start API server only
+
+# Quality
+pnpm typecheck      # TypeScript compiler
+pnpm lint           # Biome linter
+pnpm test           # Unit tests
 ```
 
-### Build & Deploy
+## Code Conventions
 
-```bash
-pnpm build            # Production build
-pnpm deploy           # Deploy (if configured)
+### File Naming
+- **All files**: `kebab-case` (no exceptions)
+- Components: `athlete-card.tsx`
+- Tests: `athlete.test.ts` (co-located with source)
+
+### Database
+- Tables: `snake_case` plural (`athletes`, `training_plans`)
+- Columns: `snake_case` (`organization_id`, `created_at`)
+
+### TypeScript
+- Functions/variables: `camelCase`
+- Types/Interfaces: `PascalCase`
+- Constants: `SCREAMING_SNAKE_CASE`
+
+### Multi-Tenancy
+- All queries MUST filter by `organizationId`
+- Repository methods receive `OrganizationContext` parameter
+- RLS policies as database-level safety net
+
+## Critical Rules
+
+### FULL-STACK PHASES (HIGHEST PRIORITY)
+
+**Every phase MUST deliver user-facing features.** Backend-only phases are incomplete.
+
+A complete phase includes:
+1. **Backend**: Domain entities → Ports → Repositories → Use Cases → Contracts → Procedures
+2. **Frontend**: Pages → Components → API hooks → Forms → User flows
+
+**If a plan does not include frontend pages/components that use the backend, the plan is incomplete.**
+
+### ARCHITECTURE-FIRST (Backend)
+
+**BEFORE writing any backend code, you MUST follow the Clean Architecture flow.** This is non-negotiable.
+
+For each domain concept (e.g., subscription, athlete, program), create layers in this order:
+
+1. **Domain Entity** → `packages/core/src/domain/entities/{entity}.ts`
+2. **Port** → `packages/core/src/ports/{entity}-repository.port.ts`
+3. **Repository** → `packages/backend/src/infrastructure/repositories/{entity}.repository.ts`
+4. **Use Case** → `packages/backend/src/use-cases/{domain}/{action}.ts`
+5. **Contracts** → `packages/contracts/src/{domain}/`
+6. **Procedure** → `packages/backend/src/procedures/{domain}/`
+
+Run `/architecture` skill before planning any backend feature.
+
+### FRONTEND-FLOW (Frontend)
+
+**AFTER backend is ready, build the frontend to use it.** Follow this order:
+
+1. **Route** → `apps/coach-web/src/routes/{feature}/` (TanStack Router)
+2. **API Hooks** → `apps/coach-web/src/lib/api/{feature}.ts` (oRPC + TanStack Query)
+3. **Page Component** → `apps/coach-web/src/routes/{feature}/index.tsx`
+4. **Feature Components** → `apps/coach-web/src/components/{feature}/`
+5. **Forms** → React Hook Form + shadcn Field pattern
+
+Run `/orpc-query` skill for API hooks, `/form` skill for forms, `/data-table` skill for tables.
+
+### MUST
+1. Import schemas from `@strenly/contracts` - never define Zod schemas inline
+2. Use `ResultAsync` from neverthrow for all async operations in use cases
+3. Pass `OrganizationContext` to all repository methods
+4. Check authorization FIRST in use cases (before any other logic)
+5. Validate via domain entity BEFORE persisting
+6. Return `{ items, totalCount }` from list queries (required for pagination)
+7. **Create domain entities for ALL domain concepts before repositories/use cases**
+8. **Create ports (interfaces) before implementing repositories**
+9. **Maintain 90%+ test coverage on `packages/core`** — domain entities must have comprehensive tests
+
+### MUST NOT
+1. No `as` type casting - fix the actual type issue. Only allowed in tests.
+2. No `!` non-null assertion - use optional chaining or guards
+3. No barrel files (`index.ts` re-exports) - exception: `procedures/router.ts`
+4. No `any` type - use `unknown` and narrow
+5. No business logic in procedures - procedures only orchestrate
+6. No queries without organization scope on tenant tables
+7. **No use cases with direct DB queries - use repositories**
+8. **No procedures without domain entity validation**
+9. **Avoid `useEffect`** - prefer callback functions, event handlers, or derived state
+
+## Clean Architecture Flow
+
+When implementing backend features, follow this order and invoke the corresponding skill:
+
+1. **Domain** (`/domain`) - `packages/core/src/domain/entities/` (entities, value objects, aggregates)
+2. **Port** (`/port`) - `packages/core/src/ports/`
+3. **Repository** (`/repository`) - `packages/backend/src/infrastructure/repositories/`
+4. **Use Case** (`/use-case` + `/authorization`) - `packages/backend/src/use-cases/`
+5. **Contracts** (`/contracts`) - `packages/contracts/src/`
+6. **Procedure** (`/procedure`) - `packages/backend/src/procedures/`
+
+## Mandatory Skills Reference
+
+**IMPORTANT:** Load the corresponding skill BEFORE writing code for each layer. Plans MUST reference required skills for each task.
+
+### Backend Skills (Load in Order)
+
+| Skill | When to Load | Location |
+|-------|--------------|----------|
+| `/architecture` | **ALWAYS FIRST** - Before planning or implementing any backend feature | Understanding flow |
+| `/domain` | Creating domain entities, value objects, and aggregates with business rules | `packages/core/src/domain/entities/` |
+| `/port` | Defining repository interfaces | `packages/core/src/ports/` |
+| `/repository` | Implementing ports with Drizzle ORM | `packages/backend/src/infrastructure/repositories/` |
+| `/authorization` | Adding permission checks to use cases | `packages/core/src/services/authorization.ts` |
+| `/use-case` | Implementing business logic orchestration | `packages/backend/src/use-cases/` |
+| `/contracts` | Creating Zod schemas for API input/output | `packages/contracts/src/` |
+| `/procedure` | Creating thin API handlers | `packages/backend/src/procedures/` |
+
+### Frontend Skills (Load for UI Work)
+
+| Skill | When to Load | Location |
+|-------|--------------|----------|
+| `/orpc-query` | Creating query/mutation hooks with TanStack Query | `apps/*/src/lib/api/` |
+| `/mutation-errors` | Handling errors in mutation hooks | Components using mutations |
+| `/form` | Creating forms with React Hook Form + shadcn Field | Form components |
+| `/data-table` | Building tables with pagination, filtering | Table components |
+
+### Frontend Patterns
+
+**Route Structure (TanStack Router):**
+```
+apps/coach-web/src/routes/
+  __root.tsx              # Root layout with providers
+  _authenticated.tsx      # Auth-required layout
+  _authenticated/
+    dashboard.tsx         # /dashboard
+    athletes/
+      index.tsx           # /athletes (list)
+      $athleteId.tsx      # /athletes/:athleteId (detail)
+      new.tsx             # /athletes/new (create)
 ```
 
-### Database (if applicable)
+**API Hooks Pattern:**
+```typescript
+// apps/coach-web/src/lib/api/athletes.ts
+import { orpc } from './client'
+import { useQuery, useMutation } from '@tanstack/react-query'
 
-```bash
-pnpm db:migrate       # Run migrations
-pnpm db:generate      # Generate migrations
-pnpm db:studio        # Database GUI
+export function useAthletes(filters) {
+  return useQuery(orpc.athletes.list.queryOptions({ input: filters }))
+}
+
+export function useCreateAthlete() {
+  return useMutation(orpc.athletes.create.mutationOptions())
+}
 ```
 
+**Component Structure:**
+```
+apps/coach-web/src/components/
+  ui/                     # shadcn/ui primitives (auto-generated)
+  athletes/               # Feature-specific components
+    athlete-card.tsx
+    athlete-form.tsx
+    athlete-table.tsx
+  layout/                 # App-wide layout components
+    sidebar.tsx
+    header.tsx
+```
+
+### Validation Skills
+
+| Skill | When to Load |
+|-------|--------------|
+| `/test-runner` | After completing code, before committing |
+
+### Planning Enforcement
+
+When creating plans, each task MUST specify which skills to load:
+
+```markdown
+<task type="auto">
+  <name>Create Athlete Domain Entity</name>
+  <skills>/domain</skills>  <!-- Required for this task -->
+  <files>packages/core/src/domain/entities/athlete.ts</files>
+  ...
+</task>
+```
+
+**Plans are INCOMPLETE if they don't reference appropriate skills for each task.**
+
+## Reference Implementation
+
+
+## Key Documentation
+
+
+
 ---
 
-## Implementation Checklist
+## Development Conventions
 
-When implementing a new feature:
+Before implementing anything, search the codebase for 2-3 existing examples of similar features (list views, forms, API routes). Document the exact pattern used including file structure, hook patterns, contract shapes, and component composition. Then implement following that same pattern exactly. Show the pattern found before writing any new code.
 
-- [ ] **Define contracts** - Zod schemas for input/output
-- [ ] **Create entities** (if new domain model)
-- [ ] **Define port** - Repository interface
-- [ ] **Implement use case** - Business logic
-- [ ] **Implement repository** - Database access
-- [ ] **Create procedure/route** - API endpoint
-- [ ] **Add authorization** - Permission checks
-- [ ] **Multi-tenancy check** - Filter by organizationId
-- [ ] **Create UI** - Frontend components
-- [ ] **Run validations** - typecheck, lint, tests
+When running a dev-story workflow, before starting implementation tasks, first use an agent to identify all existing patterns relevant to the story's features (list views, forms, API routes, test patterns) and document them. Implement each task following those patterns exactly. After all tasks, run the full quality gate (`/quality-gate`). Do not mark a story complete until the quality gate passes.
 
 ---
 
-## Project-Specific Rules
+## Quality Checks
 
-{PROJECT_SPECIFIC_RULES}
-
----
-
-## References
-
-- Central Documentation: `{CLAUDE_DOCS_PATH}`
-- Architecture Guide: `{CLAUDE_DOCS_PATH}/docs/architecture/clean-architecture.md`
-- Error Handling: `{CLAUDE_DOCS_PATH}/docs/patterns/error-handling.md`
-- Authorization: `{CLAUDE_DOCS_PATH}/docs/patterns/authorization-rbac.md`
-- Multi-Tenancy: `{CLAUDE_DOCS_PATH}/docs/patterns/multi-tenancy.md`
+Always run the full quality gate after completing changes: all tests must pass, lint must be clean, and typecheck must succeed. The command sequence is typically: run tests, run lint, run typecheck. Fix unused imports, type mismatches, and lint errors before presenting work as complete.
 
 ---
 
-**Last updated**: {DATE}
-**Maintainer**: {MAINTAINER}
+## TypeScript Rules
+
+This is a TypeScript monorepo. Never use CommonJS `require()` - always use ESM imports. Never use `as` type casts - use proper type narrowing or schema validation instead. Use Zod schemas with `.pick()` and `.extend()` for contract composition rather than manually selecting fields.
+
+---
+
+## Debugging Guidelines
+
+When debugging UI issues, ask the user to clarify the exact visual/behavioral problem before diving into source code investigation. Do not spend time adding logging or reading library source code until the problem is clearly understood. Prefer simple fixes first.
+
+---
+
+## UI Component Standards
+
+When implementing UI components (comboboxes, dropdowns, date pickers), proactively consider: empty states, infinite scroll/pagination, keyboard navigation, deletion/clearing behavior, portal/positioning for popover elements, and form nesting (nested form submit bubbling). Test these edge cases before marking work complete.
+
+Implement UI features incrementally. After each interaction pattern (create, edit, delete, empty state, error state), stop and tell the user what to test manually. Do NOT move to the next interaction until the user confirms the current one works. Start with the happy path only.
+
+---
+
+## Architecture Decisions
+
+When making architectural decisions (batch vs individual API calls, data fetching strategies, component composition), proactively flag tradeoffs to the user rather than silently choosing the simpler approach. Prefer batch endpoints over individual calls, and embed/denormalize data via schema composition rather than making extra fetches.
